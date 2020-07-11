@@ -49,6 +49,7 @@ pre {
 }
 
 .original-img {
+  width: 90%;
   max-height: 300px;
   padding-bottom: 10px;
 }
@@ -59,4 +60,5 @@ canvas {
 
 .crop {
   position: relative;
+  width: 90%;
 }

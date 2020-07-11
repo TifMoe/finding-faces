@@ -14,12 +14,14 @@ export default class App extends Component {
     this.fullFaceDescriptions = null;
     this.canvas = React.createRef();
     this.targetImg = React.createRef();
-    this.face = React.createRef();
+    this.thumbNailContainer = React.createRef();
 
     this.state = {
       thumbNail: {width: 150, height: 150},
+      thumbNailContainer: {width: 350, height: 100},
       imgSize: {width: 300, height: 250},
-      imgDescription: [{"message": ["Loading..."]}]
+      imgDescription: [{"message": ["Loading..."]}],
+      imgDetections: []
     }
   }
 
@@ -33,23 +35,21 @@ export default class App extends Component {
     }})
 
     // Find faces and draw bounding boxes
-    this.drawHTMLImage(this.canvas.current, testImageHTML);
+    await this.drawHTMLImage(this.canvas.current, testImageHTML);
     await this.getFullFaceDescription(this.canvas.current);
     let descriptions = this.drawDescription(this.canvas.current)
     this.setState({
       imgDescription: descriptions
     })
 
-    // Show crop of most dominate face
-    let firstFace = this.state.imgDescription[0]._box
-    this.getCroppedFace(this.face.current, testImageHTML, firstFace);
+    this.drawCroppedFaces(testImageHTML)
   }
 
   async loadModels() {
     await faceapi.loadFaceDetectionModel('/models')
   }
 
-  drawHTMLImage(canvas, img){
+  async drawHTMLImage(canvas, img){
     let {width, height} = this.state.thumbNail
     const ctx = canvas.getContext("2d");
     ctx.drawImage(img, 0, 0, width, height);
@@ -60,39 +60,74 @@ export default class App extends Component {
   }
 
   drawDescription = (canvas) => {
+    if (!this.fullFaceDescriptions) {
+      throw Error("no faces found")
+    }
     faceapi.matchDimensions(this.canvas.current, this.state.imgSize)
     const resizedDetections = faceapi.resizeResults(this.fullFaceDescriptions, this.state.imgSize)
-    faceapi.draw.drawDetections(canvas, resizedDetections)
-    return resizedDetections
+    this.setState({
+      imgDetections: resizedDetections
+    })
+    const faces = []
+
+    resizedDetections.forEach((element, i) => {
+      let face = {}
+      face.id = i + 1
+      face.confidence = element._score
+      let dimensions = element._box
+
+      const box = { x: dimensions._x, y: dimensions._y, width: dimensions._width, height: dimensions._y }
+      face.dimensions = box
+
+      const drawOptions = {
+        label: `Face ${face.id}: \n${face.confidence.toFixed(2)}`,
+        lineWidth: 2,
+        boxColor: "#2b9db1",
+      }
+      const drawBox = new faceapi.draw.DrawBox(box, drawOptions)
+      drawBox.draw(document.getElementById('canvas'))
+      faces.push(face)
+    })
+    return faces
   }
 
-  // drawCroppedFaces = (image) => {
-  //   this.state.imgDescription.forEach(element => {
-  //     if ('_box' in element) {
-  //       this.getCroppedFace(this.face.current, image, element._box)
-  //     }
-  //   });
-  // }
+  drawCroppedFaces = (image) => {
+    this.state.imgDetections.forEach((element, i) => {
+      if ('_box' in element) {
+        let description = element._box
+        this.getCroppedFace(this.thumbNailContainer.current, image, description, i)
+      }
+    });
+  }
 
-  getCroppedFace = (canvas, image, faceDim) => {
+  getCroppedFace = (canvas, image, faceDim, offset) => {
     let { _x, _y, _width, _height} = faceDim
+    const buffer = 20
+
+    var wrh = _width / _height;
+    var newWidth = 75;
+    var newHeight = newWidth / wrh;
+
     const scaleX = image.naturalWidth / image.width;
     const scaleY = image.naturalHeight / image.height;
-    const magnify = 2
+    let x_offset = offset * (newWidth + buffer)
 
     const ctx = canvas.getContext("2d");
+
     ctx.drawImage(
       image,
       _x * scaleX,
       _y * scaleY,
       _width * scaleX,
       _height * scaleY,
-      0,
+      x_offset,
       0, 
-      _width * magnify,
-      _height * magnify 
+      newWidth,
+      newHeight
     )
- 
+    ctx.font = "12px Arial";
+    ctx.fillStyle = "white";
+    ctx.fillText(`Face ${offset+1}`, x_offset, 12);
   }
 
   render() {
@@ -104,9 +139,9 @@ export default class App extends Component {
           </Row>
           <Row>
             <Col md={6}>
-                <canvas ref={this.canvas} width={this.state.thumbNail.width} height={this.state.thumbNail.height} />
+                <canvas ref={this.canvas} id="canvas" width={this.state.thumbNail.width} height={this.state.thumbNail.height} />
                 <Image ref={this.targetImg} className="original-img" src={image} alt="sample-img" id="sample-img" fluid />
-                <canvas className="crop" ref={this.face} width={this.state.thumbNail.width} height={this.state.thumbNail.height}/>
+                <canvas className="crop" ref={this.thumbNailContainer} width={this.state.thumbNailContainer.width} height={this.state.thumbNailContainer.height}/>
             </Col>
             <Col md={6}>
               <FacesJson data={this.state.imgDescription}/>
