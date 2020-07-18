@@ -5,78 +5,64 @@ import  * as faceapi from "face-api.js";
 
 import "./App.css";
 import 'bootstrap/dist/css/bootstrap.min.css';
-import image from "./sample-img.jpeg"
+import defaultImg from "./images/sample-img.jpeg"
 
 export default class App extends Component {
 
   constructor(props){
     super(props);
-    this.fullFaceDescriptions = null;
     this.canvas = React.createRef();
     this.targetImg = React.createRef();
     this.thumbNailContainer = React.createRef();
 
     this.state = {
+      loading: false,
       thumbNail: {width: 150, height: 150},
       thumbNailContainer: {width: 350, height: 100},
-      imgSize: {width: 300, height: 250},
-      imgDescription: [{"message": ["Loading..."]}],
-      imgDetections: []
+      maxImgContainerSize: {width: 400, height: 300},
+      imgSize: {width: 350, height: 250},
+      imgDescription: [{"message": ["Ready to find faces!"]}],
+      imgDetections: [],
+      image: defaultImg,
     }
   }
 
   async componentDidMount() {
-    // Load models and test image
-    await this.loadModels();
-    const testImageHTML = document.getElementById('sample-img');
-    this.setState({imgSize: {
-      width: this.targetImg.current.offsetWidth,
-      height: this.targetImg.current.offsetHeight,
-    }})
-
-    // Find faces and draw bounding boxes
-    await this.drawHTMLImage(this.canvas.current, testImageHTML);
-    await this.getFullFaceDescription(this.canvas.current);
-    let descriptions = this.drawDescription(this.canvas.current)
-    this.setState({
-      imgDescription: descriptions
+    await faceapi.loadFaceDetectionModel('/models').then(() => {
+      this.models = faceapi
     })
-
-    this.drawCroppedFaces(testImageHTML)
   }
 
-  async loadModels() {
-    await faceapi.loadFaceDetectionModel('/models')
+  getFullFaceDescription = async () => {
+    let fullFaceDescriptions = await this.models.detectAllFaces(this.canvas.current);
+    return fullFaceDescriptions
   }
 
-  async drawHTMLImage(canvas, img){
-    let {width, height} = this.state.thumbNail
-    const ctx = canvas.getContext("2d");
-    ctx.drawImage(img, 0, 0, width, height);
-  }
-
-  getFullFaceDescription = async (canvas) => {
-    this.fullFaceDescriptions = await faceapi.detectAllFaces(canvas);
-  }
-
-  drawDescription = (canvas) => {
-    if (!this.fullFaceDescriptions) {
-      throw Error("no faces found")
-    }
+  drawDescription = (descriptions) => {
     faceapi.matchDimensions(this.canvas.current, this.state.imgSize)
-    const resizedDetections = faceapi.resizeResults(this.fullFaceDescriptions, this.state.imgSize)
+    const resizedDetections = faceapi.resizeResults(descriptions, this.state.imgSize)
+
     this.setState({
       imgDetections: resizedDetections
     })
-    const faces = []
 
+    const details = {
+      width: resizedDetections[0]._imageDims._width,
+      height: resizedDetections[0]._imageDims._height,
+      faces: []
+    }
     resizedDetections.forEach((element, i) => {
       let face = {}
       face.id = i + 1
       face.confidence = element._score
-      let dimensions = element._box
+      let dim = element._box
 
-      const box = { x: dimensions._x, y: dimensions._y, width: dimensions._width, height: dimensions._y }
+      const box = {
+        x: dim._x,
+        y: dim._y,
+        width: dim._width,
+        height: dim._height
+      }
       face.dimensions = box
 
       const drawOptions = {
@@ -86,34 +72,33 @@ export default class App extends Component {
       }
       const drawBox = new faceapi.draw.DrawBox(box, drawOptions)
       drawBox.draw(document.getElementById('canvas'))
-      faces.push(face)
+      details.faces.push(face)
     })
-    return faces
+    return details
   }
 
   drawCroppedFaces = (image) => {
     this.state.imgDetections.forEach((element, i) => {
       if ('_box' in element) {
-        let description = element._box
-        this.getCroppedFace(this.thumbNailContainer.current, image, description, i)
+        let dim = element._box
+        this.getCroppedFace(this.thumbNailContainer.current, image, dim, i)
       }
     });
   }
 
   getCroppedFace = (canvas, image, faceDim, offset) => {
-    let { _x, _y, _width, _height} = faceDim
     const buffer = 20
+    const newWidth = 75;
+    const x_offset = offset * (newWidth + buffer)
 
-    var wrh = _width / _height;
-    var newWidth = 75;
-    var newHeight = newWidth / wrh;
+    let { _x, _y, _width, _height} = faceDim
+    let scaleX = image.naturalWidth / image.width
+    let scaleY = image.naturalHeight / image.height
 
-    const scaleX = image.naturalWidth / image.width;
-    const scaleY = image.naturalHeight / image.height;
-    let x_offset = offset * (newWidth + buffer)
+    let wrh = _width / _height;
+    let newHeight = newWidth / wrh;
 
     const ctx = canvas.getContext("2d");
-
     ctx.drawImage(
       image,
       _x * scaleX,
@@ -130,18 +115,134 @@ export default class App extends Component {
     ctx.fillText(`Face ${offset+1}`, x_offset, 12);
   }
 
+  reset() {
+    const ctx1 = this.canvas.current.getContext("2d");
+    const ctx2 = this.thumbNailContainer.current.getContext("2d");
+    ctx1.clearRect(0, 0, this.canvas.current.width, this.canvas.current.height);
+    ctx2.clearRect(0, 0, this.thumbNailContainer.current.width, this.thumbNailContainer.current.height);
+
+    this.setState({
+      imgDetections: []
+    })
+  }
+
+  findFaces(img) {
+    try {
+      // Draw image to canvas for detection
+      const ctx = this.canvas.current.getContext("2d");
+      let {width, height} = this.state.imgSize
+      if(img.naturalWidth === 0) {
+        throw Error("image failed to load")
+      }
+      ctx.drawImage(img, 0, 0, width, height);
+
+      // Detect faces
+      this.models.detectAllFaces(this.canvas.current).then((descriptions) => {
+        if (descriptions.length === 0) {
+          alert("no faces detected")
+        }
+        const resizedDetails = this.drawDescription(descriptions)
+        this.setState({imgDescription: resizedDetails})
+        this.drawCroppedFaces(img)
+      })
+    } catch (error) {
+      console.log(error);
+    }
+  }
+
+  findScaleWidthHeight(img) {
+    var scaledWidth
+    var scaledHeight
+    let wrh = img.naturalWidth / img.naturalHeight;
+
+    if (img.naturalHeight > this.state.maxImgContainerSize.height) {
+      scaledHeight = this.state.maxImgContainerSize.height
+      scaledWidth = scaledHeight * wrh;
+      if (scaledWidth > this.state.maxImgContainerSize.width) {
+        scaledWidth = this.state.maxImgContainerSize.width
+        scaledHeight = scaledWidth/wrh;
+      }
+
+    } else if (img.naturalWidth > this.state.maxImgContainerSize.width) {
+      scaledWidth = this.state.maxImgContainerSize.width
+      scaledHeight = scaledWidth/wrh;
+      if (scaledHeight > this.state.maxImgContainerSize.height) {
+        scaledHeight = this.state.maxImgContainerSize.height
+        scaledWidth = scaledHeight * wrh;
+      }
+    }
+    return {width: scaledWidth, height: scaledHeight}
+  }
+
+  handleImageChange(e) {
+    e.preventDefault();
+
+    let reader = new FileReader();
+    let file = e.target.files[0];
+
+    reader.onloadend = () => {
+      this.setState({
+        file: file,
+        image: reader.result
+      });
+    }
+    this.reset()
+    reader.readAsDataURL(file)
+  }
+
+  handleFindFaces = event => {
+    event.preventDefault()
+    this.reset()
+
+    // Get image element, save scaled dimensions and find faces
+    const testImageHTML = document.getElementById('sample-img');
+    let scaled = this.findScaleWidthHeight(testImageHTML)
+    this.setState({imgSize: {
+      width: scaled.width,
+      height: scaled.height
+    }}, () => {
+      this.findFaces(testImageHTML)
+    });
+  }
+
   render() {
     return (
       <div className="App">
         <Container>
-          <Row>
-            <div className="App-header">Find the Faces!</div>
+          <Row className="App-header">
+            <Col>
+              <h1>Find the Faces!</h1>
+              <p>Use the default image below or upload your own to see demo of face detection API</p>
+              <button
+                className="button"
+                type="submit"
+                onClick={this.handleFindFaces}>
+                Click to start
+              </button>
+            </Col>
           </Row>
           <Row>
-            <Col md={6}>
-                <canvas ref={this.canvas} id="canvas" width={this.state.thumbNail.width} height={this.state.thumbNail.height} />
-                <Image ref={this.targetImg} className="original-img" src={image} alt="sample-img" id="sample-img" fluid />
-                <canvas className="crop" ref={this.thumbNailContainer} width={this.state.thumbNailContainer.width} height={this.state.thumbNailContainer.height}/>
+            <Col md={6} ref={this.imgCol}>
+              <canvas ref={this.canvas} id="canvas" width={this.state.imgSize.width} height={this.state.imgSize.height} />
+              <Image
+                ref={this.targetImg}
+                className="img-display"
+                src={this.state.image}
+                style={{
+                  width: this.state.imgSize.width,
+                  height: this.state.imgSize.height,
+                }}
+                alt="sample-img"
+                id="sample-img"
+                fluid
+              />
+              <form className="inputForm">
+                <input className="fileInput"
+                  type="file"
+                  onChange={(e)=>this.handleImageChange(e)} />
+              </form>
+
+              <canvas className="crop" ref={this.thumbNailContainer} width={this.state.thumbNailContainer.width} height={this.state.thumbNailContainer.height}/>
             </Col>
             <Col md={6}>
               <FacesJson data={this.state.imgDescription}/>
