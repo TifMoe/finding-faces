@@ -1,9 +1,0 @@
-name = "finding-faces"
-type = "webpack"
-account_id = "661484bfa811d50ad0a7c946485ad9ae"
-route = "findthefaces.com/*"
-zone_id = "0912204de80e1abfbdc8e962f6b2f902"
-
-[site]
-bucket = "./build"
-entry-point = "workers-site"
